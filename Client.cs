@@ -31,6 +31,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Net.Security;
+using System.Threading.Tasks;
 
 namespace pdfcrowd
 {
@@ -82,6 +83,17 @@ namespace pdfcrowd
     {
       convert(out_stream, "uri", uri);
     }
+
+    //
+    // Converts a web page.
+    //
+    // uri        - a web page URL
+    // out_stream - a System.IO.Stream implementation
+    // 
+    public async Task convertURIAsync(string uri, Stream out_stream)
+    {
+        await convertAsync(out_stream, "uri", uri);
+    }
     
     //
     // Converts an in-memory html document.
@@ -95,6 +107,17 @@ namespace pdfcrowd
     }
 
     //
+    // Converts an in-memory html document.
+    //
+    // content    - a string containing a html document
+    // out_stream - a System.IO.Stream implementation
+    // 
+    public async Task convertHtmlAsync(string content, Stream out_stream)
+    {
+        await convertAsync(out_stream, "html", content);
+    }
+
+    //
     // Converts an html file.
     //
     // fpath      - a path to an html file
@@ -103,6 +126,17 @@ namespace pdfcrowd
     public void convertFile(string fpath, Stream out_stream)
     {
       post_multipart(fpath, out_stream);
+    }
+
+    //
+    // Converts an html file.
+    //
+    // fpath      - a path to an html file
+    // out_stream - a System.IO.Stream implementation
+    // 
+    public async Task convertFileAsync(string fpath, Stream out_stream)
+    {
+        await post_multipartAsync(fpath, out_stream);
     }
 
     //
@@ -443,7 +477,13 @@ namespace pdfcrowd
       string uri = String.Format("{0}pdf/convert/{1}/", api_uri, method);
       call_api(uri, out_stream, src);
     }
-    
+
+    private async Task convertAsync(Stream out_stream, string method, string src)
+    {
+        string uri = String.Format("{0}pdf/convert/{1}/", api_uri, method);
+        await call_apiAsync(uri, out_stream, src);
+    }
+
     private static void CopyStream(Stream input, Stream output)
     {
       byte[] buffer = new byte[32768];
@@ -466,6 +506,17 @@ namespace pdfcrowd
       }
       string data = encode_post_data(extra_data);
       do_request(uri, out_stream, data, "application/x-www-form-urlencoded");
+    }
+
+    private async Task call_apiAsync(string uri, Stream out_stream, string src)
+    {
+        StringDictionary extra_data = new StringDictionary();
+        if (src != null)
+        {
+            extra_data["src"] = src;
+        }
+        string data = encode_post_data(extra_data);
+        await do_requestAsync(uri, out_stream, data, "application/x-www-form-urlencoded");
     }
 
     private static void do_request(string uri, Stream out_stream, object data, string content_type)
@@ -530,7 +581,73 @@ namespace pdfcrowd
           }
       }
     }
-    
+
+    private static async Task do_requestAsync(string uri, Stream out_stream, object data, string content_type)
+    {
+        WebRequest request = WebRequest.Create(uri);
+        request.Method = "POST";
+
+        byte[] byteArray;
+        if ((data is byte[]))
+        {
+            byteArray = (byte[])data;
+        }
+        else
+        {
+            byteArray = Encoding.UTF8.GetBytes((string)data);
+        }
+        request.ContentType = content_type;
+        request.ContentLength = byteArray.Length;
+        try
+        {
+            using (Stream dataStream = request.GetRequestStream())
+            {
+                dataStream.Write(byteArray, 0, byteArray.Length);
+            }
+
+            // Get the response.
+            using (var webResponse = await request.GetResponseAsync())
+            {
+                var response = (HttpWebResponse)webResponse;
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    // Get the stream containing content returned by the server.
+                    using (Stream dataStream = response.GetResponseStream())
+                    {
+                        CopyStream(dataStream, out_stream);
+                        out_stream.Position = 0;
+                    }
+                }
+                else
+                {
+                    throw new Error(response.StatusDescription, response.StatusCode);
+                }
+            }
+        }
+        catch (WebException why)
+        {
+            if (why.Status == WebExceptionStatus.ProtocolError)
+            {
+                HttpWebResponse response = (HttpWebResponse)why.Response;
+
+                MemoryStream stream = new MemoryStream();
+                CopyStream(response.GetResponseStream(), stream);
+                stream.Position = 0;
+                string err = read_stream(stream);
+                throw new Error(err, response.StatusCode);
+            }
+            else
+            {
+                string innerException = "";
+                if (why.InnerException != null)
+                {
+                    innerException = "\n" + why.InnerException.Message;
+                }
+                throw new Error(why.Message + innerException, HttpStatusCode.Unused);
+            }
+        }
+    }
+
     private string encode_post_data(StringDictionary extra_data)
     {
       StringDictionary data = new StringDictionary();
@@ -632,7 +749,12 @@ namespace pdfcrowd
       byte[] data = encode_multipart_post_data(fpath);
       do_request(api_uri + "pdf/convert/html/", out_stream, data, multipart_content_type);
     }
-    
+
+    private async Task post_multipartAsync(string fpath, Stream out_stream)
+    {
+        byte[] data = encode_multipart_post_data(fpath);
+        await do_requestAsync(api_uri + "pdf/convert/html/", out_stream, data, multipart_content_type);
+    }
 
   }
 }
